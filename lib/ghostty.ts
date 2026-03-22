@@ -20,6 +20,7 @@ import {
   type RGB,
   type RenderStateColors,
   type RenderStateCursor,
+  type RenderStateHandle,
   type TerminalHandle,
 } from './types';
 
@@ -255,6 +256,8 @@ export class GhosttyTerminal {
   private exports: GhosttyWasmExports;
   private memory: WebAssembly.Memory;
   private handle: TerminalHandle;
+  private renderStateHandle: RenderStateHandle;
+  private lastAlternateScreen: boolean;
   private _cols: number;
   private _rows: number;
 
@@ -320,10 +323,12 @@ export class GhosttyTerminal {
         this.exports.ghostty_wasm_free_u8_array(configPtr, GHOSTTY_CONFIG_SIZE);
       }
     } else {
-      this.handle = this.exports.ghostty_terminal_new(cols, rows);
+      this.handle = this.exports.ghostty_terminal_new_with_config(cols, rows, 0);
     }
 
     if (!this.handle) throw new Error('Failed to create terminal');
+    this.renderStateHandle = this.createRenderState();
+    this.lastAlternateScreen = this.isAlternateScreen();
 
     this.initCellPool();
   }
@@ -351,7 +356,10 @@ export class GhosttyTerminal {
     if (cols === this._cols && rows === this._rows) return;
     this._cols = cols;
     this._rows = rows;
-    this.exports.ghostty_terminal_resize(this.handle, cols, rows);
+    const result = this.exports.ghostty_terminal_resize(this.handle, cols, rows);
+    if (result !== 0) {
+      throw new Error(`Failed to resize terminal: ${result}`);
+    }
     this.invalidateBuffers();
     this.initCellPool();
   }
@@ -361,6 +369,12 @@ export class GhosttyTerminal {
       this.exports.ghostty_wasm_free_u8_array(this.viewportBufferPtr, this.viewportBufferSize);
       this.viewportBufferPtr = 0;
     }
+    if (this.graphemeBufferPtr) {
+      this.exports.ghostty_wasm_free_u8_array(this.graphemeBufferPtr, 16 * 4);
+      this.graphemeBufferPtr = 0;
+      this.graphemeBuffer = null;
+    }
+    this.exports.ghostty_render_state_free(this.renderStateHandle);
     this.exports.ghostty_terminal_free(this.handle);
   }
 
@@ -382,7 +396,18 @@ export class GhosttyTerminal {
    * Safe to call multiple times - dirty state persists until markClean().
    */
   update(): DirtyState {
-    return this.exports.ghostty_render_state_update(this.handle) as DirtyState;
+    const currentAlternateScreen = this.isAlternateScreen();
+    if (currentAlternateScreen !== this.lastAlternateScreen) {
+      this.exports.ghostty_render_state_free(this.renderStateHandle);
+      this.renderStateHandle = this.createRenderState();
+      this.lastAlternateScreen = currentAlternateScreen;
+    }
+
+    const result = this.exports.ghostty_render_state_update(this.renderStateHandle, this.handle);
+    if (result !== 0) {
+      return DirtyState.FULL;
+    }
+    return this.exports.ghostty_render_state_get_dirty(this.renderStateHandle) as DirtyState;
   }
 
   /**
@@ -394,11 +419,11 @@ export class GhosttyTerminal {
     // This is safe to call multiple times - dirty state persists until markClean().
     this.update();
     return {
-      x: this.exports.ghostty_render_state_get_cursor_x(this.handle),
-      y: this.exports.ghostty_render_state_get_cursor_y(this.handle),
-      viewportX: this.exports.ghostty_render_state_get_cursor_x(this.handle),
-      viewportY: this.exports.ghostty_render_state_get_cursor_y(this.handle),
-      visible: this.exports.ghostty_render_state_get_cursor_visible(this.handle),
+      x: this.exports.ghostty_render_state_get_cursor_x(this.renderStateHandle),
+      y: this.exports.ghostty_render_state_get_cursor_y(this.renderStateHandle),
+      viewportX: this.exports.ghostty_render_state_get_cursor_x(this.renderStateHandle),
+      viewportY: this.exports.ghostty_render_state_get_cursor_y(this.renderStateHandle),
+      visible: this.exports.ghostty_render_state_get_cursor_visible(this.renderStateHandle),
       blinking: false, // TODO: Add blinking support
       style: 'block', // TODO: Add style support
     };
@@ -408,8 +433,8 @@ export class GhosttyTerminal {
    * Get default colors from render state
    */
   getColors(): RenderStateColors {
-    const bg = this.exports.ghostty_render_state_get_bg_color(this.handle);
-    const fg = this.exports.ghostty_render_state_get_fg_color(this.handle);
+    const bg = this.exports.ghostty_render_state_get_bg_color(this.renderStateHandle);
+    const fg = this.exports.ghostty_render_state_get_fg_color(this.renderStateHandle);
     return {
       background: {
         r: (bg >> 16) & 0xff,
@@ -429,14 +454,14 @@ export class GhosttyTerminal {
    * Check if a specific row is dirty
    */
   isRowDirty(y: number): boolean {
-    return this.exports.ghostty_render_state_is_row_dirty(this.handle, y);
+    return this.exports.ghostty_render_state_is_row_dirty(this.renderStateHandle, y);
   }
 
   /**
    * Mark render state as clean (call after rendering)
    */
   markClean(): void {
-    this.exports.ghostty_render_state_mark_clean(this.handle);
+    this.exports.ghostty_render_state_mark_clean(this.renderStateHandle);
   }
 
   /**
@@ -444,6 +469,8 @@ export class GhosttyTerminal {
    * Returns a reusable cell array (zero allocation after warmup).
    */
   getViewport(): GhosttyCell[] {
+    this.update();
+
     const totalCells = this._cols * this._rows;
     const neededSize = totalCells * GhosttyTerminal.CELL_SIZE;
 
@@ -458,7 +485,7 @@ export class GhosttyTerminal {
 
     // Get all cells in one call
     const count = this.exports.ghostty_render_state_get_viewport(
-      this.handle,
+      this.renderStateHandle,
       this.viewportBufferPtr,
       totalCells
     );
@@ -746,6 +773,20 @@ export class GhosttyTerminal {
   // Private helpers
   // ==========================================================================
 
+  private createRenderState(): RenderStateHandle {
+    const resultPtr = this.exports.ghostty_wasm_alloc_opaque();
+    try {
+      const result = this.exports.ghostty_render_state_new(0, resultPtr);
+      if (result !== 0) {
+        throw new Error(`Failed to create render state: ${result}`);
+      }
+      const view = new DataView(this.memory.buffer);
+      return view.getUint32(resultPtr, true);
+    } finally {
+      this.exports.ghostty_wasm_free_opaque(resultPtr);
+    }
+  }
+
   private initCellPool(): void {
     const total = this._cols * this._rows;
     if (this.cellPool.length < total) {
@@ -800,6 +841,8 @@ export class GhosttyTerminal {
    * @returns Array of codepoints, or null on error
    */
   getGrapheme(row: number, col: number): number[] | null {
+    this.update();
+
     // Allocate buffer on first use (16 codepoints should be enough for any grapheme)
     if (!this.graphemeBuffer) {
       this.graphemeBufferPtr = this.exports.ghostty_wasm_alloc_u8_array(16 * 4);
@@ -807,7 +850,7 @@ export class GhosttyTerminal {
     }
 
     const count = this.exports.ghostty_render_state_get_grapheme(
-      this.handle,
+      this.renderStateHandle,
       row,
       col,
       this.graphemeBufferPtr,

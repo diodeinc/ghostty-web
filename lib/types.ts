@@ -408,30 +408,33 @@ export interface GhosttyWasmExports extends WebAssembly.Exports {
   ghostty_key_event_set_utf8(event: number, ptr: number, len: number): void;
 
   // Terminal lifecycle
-  ghostty_terminal_new(cols: number, rows: number): TerminalHandle;
+  ghostty_terminal_new(allocator: number, terminalPtrPtr: number, optionsPtr: number): number;
   ghostty_terminal_new_with_config(cols: number, rows: number, configPtr: number): TerminalHandle;
   ghostty_terminal_free(terminal: TerminalHandle): void;
-  ghostty_terminal_resize(terminal: TerminalHandle, cols: number, rows: number): void;
+  ghostty_terminal_resize(terminal: TerminalHandle, cols: number, rows: number): number;
   ghostty_terminal_write(terminal: TerminalHandle, dataPtr: number, dataLen: number): void;
 
-  // RenderState API - high-performance rendering (ONE call gets ALL data)
-  ghostty_render_state_update(terminal: TerminalHandle): number; // 0=none, 1=partial, 2=full
-  ghostty_render_state_get_cols(terminal: TerminalHandle): number;
-  ghostty_render_state_get_rows(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_x(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_y(terminal: TerminalHandle): number;
-  ghostty_render_state_get_cursor_visible(terminal: TerminalHandle): boolean;
-  ghostty_render_state_get_bg_color(terminal: TerminalHandle): number; // 0xRRGGBB
-  ghostty_render_state_get_fg_color(terminal: TerminalHandle): number; // 0xRRGGBB
-  ghostty_render_state_is_row_dirty(terminal: TerminalHandle, row: number): boolean;
-  ghostty_render_state_mark_clean(terminal: TerminalHandle): void;
+  // RenderState API
+  ghostty_render_state_new(allocator: number, renderStatePtrPtr: number): number;
+  ghostty_render_state_free(renderState: RenderStateHandle): void;
+  ghostty_render_state_update(renderState: RenderStateHandle, terminal: TerminalHandle): number;
+  ghostty_render_state_get_dirty(renderState: RenderStateHandle): number;
+  ghostty_render_state_get_cols(renderState: RenderStateHandle): number;
+  ghostty_render_state_get_rows(renderState: RenderStateHandle): number;
+  ghostty_render_state_get_cursor_x(renderState: RenderStateHandle): number;
+  ghostty_render_state_get_cursor_y(renderState: RenderStateHandle): number;
+  ghostty_render_state_get_cursor_visible(renderState: RenderStateHandle): boolean;
+  ghostty_render_state_get_bg_color(renderState: RenderStateHandle): number; // 0xRRGGBB
+  ghostty_render_state_get_fg_color(renderState: RenderStateHandle): number; // 0xRRGGBB
+  ghostty_render_state_is_row_dirty(renderState: RenderStateHandle, row: number): boolean;
+  ghostty_render_state_mark_clean(renderState: RenderStateHandle): void;
   ghostty_render_state_get_viewport(
-    terminal: TerminalHandle,
+    renderState: RenderStateHandle,
     bufPtr: number,
     bufLen: number
   ): number; // Returns total cells written or -1 on error
   ghostty_render_state_get_grapheme(
-    terminal: TerminalHandle,
+    renderState: RenderStateHandle,
     row: number,
     col: number,
     bufPtr: number,
@@ -550,6 +553,11 @@ export const GHOSTTY_CONFIG_SIZE = 80;
  * Opaque terminal pointer (WASM memory address)
  */
 export type TerminalHandle = number;
+
+/**
+ * Opaque render-state pointer (WASM memory address)
+ */
+export type RenderStateHandle = number;
 
 /**
  * Cell structure matching ghostty_cell_t in C (16 bytes)

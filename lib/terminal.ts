@@ -101,7 +101,9 @@ export class Terminal implements ITerminalCore {
   private isOpen = false;
   private isDisposed = false;
   private animationFrameId?: number;
-  private writeQueue: Uint8Array[] = [];
+  private writeQueue: Array<{ data: string | Uint8Array; callback?: () => void }> = [];
+  private pendingWriteCallbacks: Array<() => void> = [];
+  private forceFullRenderNextFrame = false;
 
   // Addons
   private addons: ITerminalAddon[] = [];
@@ -546,7 +548,7 @@ export class Terminal implements ITerminalCore {
       data = data.replace(/\n/g, '\r\n');
     }
 
-    this.writeInternal(data, callback);
+    this.writeQueue.push({ data, callback });
   }
 
   /**
@@ -586,13 +588,11 @@ export class Terminal implements ITerminalCore {
       this.checkForTitleChange(data);
     }
 
-    // Call callback if provided
     if (callback) {
-      // Queue callback after next render
-      requestAnimationFrame(callback);
+      this.pendingWriteCallbacks.push(callback);
     }
 
-    // Render will happen on next animation frame
+    this.forceFullRenderNextFrame = true;
   }
 
   /**
@@ -1144,8 +1144,19 @@ export class Terminal implements ITerminalCore {
    */
   private flushWriteQueue(): void {
     while (this.writeQueue.length > 0) {
-      const data = this.writeQueue.shift()!;
-      this.wasmTerm!.write(data);
+      const { data, callback } = this.writeQueue.shift()!;
+      this.writeInternal(data, callback);
+    }
+  }
+
+  private flushWriteCallbacks(): void {
+    if (this.pendingWriteCallbacks.length === 0) {
+      return;
+    }
+
+    const callbacks = this.pendingWriteCallbacks.splice(0);
+    for (const callback of callbacks) {
+      callback();
     }
   }
 
@@ -1156,12 +1167,17 @@ export class Terminal implements ITerminalCore {
     if (this.animationFrameId) return; // already running
     const loop = () => {
       if (!this.isDisposed && this.isOpen) {
+        this.flushWriteQueue();
+
+        const forceAll = this.forceFullRenderNextFrame;
+        this.forceFullRenderNextFrame = false;
+
         // Render using WASM's native dirty tracking
         // The render() method:
         // 1. Calls update() once to sync state and check dirty flags
         // 2. Only redraws dirty rows when forceAll=false
         // 3. Always calls clearDirty() at the end
-        this.renderer!.render(this.wasmTerm!, false, this.viewportY, this, this.scrollbarOpacity);
+        this.renderer!.render(this.wasmTerm!, forceAll, this.viewportY, this, this.scrollbarOpacity);
 
         // Check for cursor movement (Phase 2: onCursorMove event)
         // Note: getCursor() reads from already-updated render state (from render() above)
@@ -1170,6 +1186,8 @@ export class Terminal implements ITerminalCore {
           this.lastCursorY = cursor.y;
           this.cursorMoveEmitter.fire();
         }
+
+        this.flushWriteCallbacks();
 
         // Note: onRender event is intentionally not fired in the render loop
         // to avoid performance issues. For now, consumers can use requestAnimationFrame
