@@ -412,56 +412,48 @@ export interface GhosttyWasmExports extends WebAssembly.Exports {
   ghostty_terminal_new_with_config(cols: number, rows: number, configPtr: number): TerminalHandle;
   ghostty_terminal_free(terminal: TerminalHandle): void;
   ghostty_terminal_resize(terminal: TerminalHandle, cols: number, rows: number): number;
+  ghostty_terminal_vt_write(terminal: TerminalHandle, dataPtr: number, dataLen: number): void;
   ghostty_terminal_write(terminal: TerminalHandle, dataPtr: number, dataLen: number): void;
+  ghostty_terminal_scroll_viewport(terminal: TerminalHandle, behaviorPtr: number): void;
+  ghostty_terminal_mode_get(terminal: TerminalHandle, mode: number, outPtr: number): number;
+  ghostty_terminal_get(terminal: TerminalHandle, data: number, outPtr: number): number;
+  ghostty_terminal_grid_ref(terminal: TerminalHandle, pointPtr: number, outRefPtr: number): number;
 
   // RenderState API
   ghostty_render_state_new(allocator: number, renderStatePtrPtr: number): number;
   ghostty_render_state_free(renderState: RenderStateHandle): void;
   ghostty_render_state_update(renderState: RenderStateHandle, terminal: TerminalHandle): number;
-  ghostty_render_state_get_dirty(renderState: RenderStateHandle): number;
-  ghostty_render_state_get_cols(renderState: RenderStateHandle): number;
-  ghostty_render_state_get_rows(renderState: RenderStateHandle): number;
-  ghostty_render_state_get_cursor_x(renderState: RenderStateHandle): number;
-  ghostty_render_state_get_cursor_y(renderState: RenderStateHandle): number;
-  ghostty_render_state_get_cursor_visible(renderState: RenderStateHandle): boolean;
-  ghostty_render_state_get_bg_color(renderState: RenderStateHandle): number; // 0xRRGGBB
-  ghostty_render_state_get_fg_color(renderState: RenderStateHandle): number; // 0xRRGGBB
-  ghostty_render_state_is_row_dirty(renderState: RenderStateHandle, row: number): boolean;
-  ghostty_render_state_mark_clean(renderState: RenderStateHandle): void;
-  ghostty_render_state_get_viewport(
-    renderState: RenderStateHandle,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns total cells written or -1 on error
-  ghostty_render_state_get_grapheme(
-    renderState: RenderStateHandle,
-    row: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns count of codepoints or -1 on error
-
-  // Terminal modes
-  ghostty_terminal_is_alternate_screen(terminal: TerminalHandle): boolean;
-  ghostty_terminal_has_mouse_tracking(terminal: TerminalHandle): number;
-  ghostty_terminal_get_mode(terminal: TerminalHandle, mode: number, isAnsi: boolean): number;
-
-  // Scrollback API
-  ghostty_terminal_get_scrollback_length(terminal: TerminalHandle): number;
-  ghostty_terminal_get_scrollback_line(
-    terminal: TerminalHandle,
-    offset: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns cells written or -1 on error
-  ghostty_terminal_get_scrollback_grapheme(
-    terminal: TerminalHandle,
-    offset: number,
-    col: number,
-    bufPtr: number,
-    bufLen: number
-  ): number; // Returns codepoint count or -1 on error
-  ghostty_terminal_is_row_wrapped(terminal: TerminalHandle, row: number): number;
+  ghostty_render_state_get(renderState: RenderStateHandle, data: number, outPtr: number): number;
+  ghostty_render_state_set(renderState: RenderStateHandle, option: number, valuePtr: number): number;
+  ghostty_render_state_colors_get(renderState: RenderStateHandle, colorsPtr: number): number;
+  ghostty_render_state_row_iterator_new(
+    allocator: number,
+    iteratorPtrPtr: number
+  ): number;
+  ghostty_render_state_row_iterator_free(iterator: RenderStateRowIteratorHandle): void;
+  ghostty_render_state_row_iterator_next(iterator: RenderStateRowIteratorHandle): boolean;
+  ghostty_render_state_row_get(
+    iterator: RenderStateRowIteratorHandle,
+    data: number,
+    outPtr: number
+  ): number;
+  ghostty_render_state_row_set(
+    iterator: RenderStateRowIteratorHandle,
+    option: number,
+    valuePtr: number
+  ): number;
+  ghostty_render_state_row_cells_new(
+    allocator: number,
+    cellsPtrPtr: number
+  ): number;
+  ghostty_render_state_row_cells_free(cells: RenderStateRowCellsHandle): void;
+  ghostty_render_state_row_cells_next(cells: RenderStateRowCellsHandle): boolean;
+  ghostty_render_state_row_cells_select(cells: RenderStateRowCellsHandle, x: number): number;
+  ghostty_render_state_row_cells_get(
+    cells: RenderStateRowCellsHandle,
+    data: number,
+    outPtr: number
+  ): number;
 
   // Hyperlink API
   ghostty_terminal_get_hyperlink_uri(
@@ -482,6 +474,19 @@ export interface GhosttyWasmExports extends WebAssembly.Exports {
   // Response API (for DSR and other terminal queries)
   ghostty_terminal_has_response(terminal: TerminalHandle): boolean;
   ghostty_terminal_read_response(terminal: TerminalHandle, bufPtr: number, bufLen: number): number; // Returns bytes written, 0 if no response, -1 on error
+
+  // Screen/grid/style inspection
+  ghostty_cell_get(cell: bigint, data: number, outPtr: number): number;
+  ghostty_row_get(row: bigint, data: number, outPtr: number): number;
+  ghostty_grid_ref_cell(refPtr: number, outCellPtr: number): number;
+  ghostty_grid_ref_row(refPtr: number, outRowPtr: number): number;
+  ghostty_grid_ref_graphemes(
+    refPtr: number,
+    bufPtr: number,
+    bufLen: number,
+    outLenPtr: number
+  ): number;
+  ghostty_grid_ref_style(refPtr: number, outStylePtr: number): number;
 }
 
 // ============================================================================
@@ -560,6 +565,16 @@ export type TerminalHandle = number;
 export type RenderStateHandle = number;
 
 /**
+ * Opaque render-state row iterator pointer (WASM memory address)
+ */
+export type RenderStateRowIteratorHandle = number;
+
+/**
+ * Opaque render-state row cells pointer (WASM memory address)
+ */
+export type RenderStateRowCellsHandle = number;
+
+/**
  * Cell structure matching ghostty_cell_t in C (16 bytes)
  */
 export interface GhosttyCell {
@@ -574,6 +589,7 @@ export interface GhosttyCell {
   width: number; // u8 (character width: 1=normal, 2=wide, etc.)
   hyperlink_id: number; // u16 (0 = no link, >0 = hyperlink ID in set)
   grapheme_len: number; // u8 (number of extra codepoints beyond first)
+  grapheme?: string; // Optional fully-resolved grapheme string for snapshot rendering
 }
 
 /**

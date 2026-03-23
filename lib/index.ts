@@ -73,6 +73,7 @@ export type {
 // Ghostty WASM components (for advanced usage)
 export {
   Ghostty,
+  GhosttyRenderFrame,
   GhosttyTerminal,
   KeyEncoder,
   CellFlags,

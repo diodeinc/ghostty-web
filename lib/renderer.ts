@@ -24,12 +24,6 @@ export interface IRenderable {
   /** Returns true if a full redraw is needed (e.g., screen change) */
   needsFullRedraw?(): boolean;
   clearDirty(): void;
-  /**
-   * Get the full grapheme string for a cell at (row, col).
-   * For cells with grapheme_len > 0, this returns all codepoints combined.
-   * For simple cells, returns the single character.
-   */
-  getGraphemeString?(row: number, col: number): string;
 }
 
 export interface IScrollbackProvider {
@@ -271,11 +265,9 @@ export class CanvasRenderer {
     scrollbackProvider?: IScrollbackProvider,
     scrollbarOpacity: number = 1
   ): void {
-    // Store buffer reference for grapheme lookups in renderCell
+    // Store buffer reference for cursor redraw lookups
     this.currentBuffer = buffer;
 
-    // getCursor() calls update() internally to ensure fresh state.
-    // Multiple update() calls are safe - dirty state persists until clearDirty().
     const cursor = buffer.getCursor();
     const dims = buffer.getDimensions();
     const scrollbackLength = scrollbackProvider ? scrollbackProvider.getScrollbackLength() : 0;
@@ -638,15 +630,8 @@ export class CanvasRenderer {
     const textX = cellX;
     const textY = cellY + this.metrics.baseline;
 
-    // Get the character to render - use grapheme lookup for complex scripts
-    let char: string;
-    if (cell.grapheme_len > 0 && this.currentBuffer?.getGraphemeString) {
-      // Cell has additional codepoints - get full grapheme cluster
-      char = this.currentBuffer.getGraphemeString(y, x);
-    } else {
-      // Simple cell - single codepoint
-      char = String.fromCodePoint(cell.codepoint || 32); // Default to space if null
-    }
+    // Snapshot cells may already carry the resolved grapheme string.
+    const char = cell.grapheme ?? String.fromCodePoint(cell.codepoint || 32);
     this.ctx.fillText(char, textX, textY);
 
     // Reset alpha

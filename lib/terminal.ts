@@ -17,7 +17,13 @@
 
 import { BufferNamespace } from './buffer';
 import { EventEmitter } from './event-emitter';
-import type { Ghostty, GhosttyCell, GhosttyTerminal, GhosttyTerminalConfig } from './ghostty';
+import type {
+  Ghostty,
+  GhosttyCell,
+  GhosttyRenderFrame,
+  GhosttyTerminal,
+  GhosttyTerminalConfig,
+} from './ghostty';
 import { getGhostty } from './index';
 import { InputHandler, type MouseTrackingConfig } from './input-handler';
 import type {
@@ -101,9 +107,15 @@ export class Terminal implements ITerminalCore {
   private isOpen = false;
   private isDisposed = false;
   private animationFrameId?: number;
-  private writeQueue: Array<{ data: string | Uint8Array; callback?: () => void }> = [];
+  private writeQueue: Array<{
+    data: string | Uint8Array;
+    callback?: () => void;
+    preserveViewport?: boolean;
+  }> = [];
   private pendingWriteCallbacks: Array<() => void> = [];
   private forceFullRenderNextFrame = false;
+  private suspendWrites = false;
+  private flushingWriteQueue = false;
 
   // Addons
   private addons: ITerminalAddon[] = [];
@@ -253,7 +265,7 @@ export class Terminal implements ITerminalCore {
     this.canvas.style.height = `${metrics.height * this.rows}px`;
 
     // Force full re-render with new font
-    this.renderer.render(this.wasmTerm, true, this.viewportY, this);
+    this.renderCurrentFrame(true);
   }
 
   /**
@@ -522,7 +534,7 @@ export class Terminal implements ITerminalCore {
       parent.addEventListener('wheel', this.handleWheel, { passive: false, capture: true });
 
       // Render initial blank screen (force full redraw)
-      this.renderer.render(this.wasmTerm, true, this.viewportY, this, this.scrollbarOpacity);
+      this.renderCurrentFrame(true, this.scrollbarOpacity);
 
       // Start render loop
       this.startRenderLoop();
@@ -548,16 +560,53 @@ export class Terminal implements ITerminalCore {
       data = data.replace(/\n/g, '\r\n');
     }
 
-    this.writeQueue.push({ data, callback });
+    if (this.suspendWrites || this.flushingWriteQueue) {
+      this.writeQueue.push({ data, callback, preserveViewport: false });
+      return;
+    }
+
+    this.writeInternal(data, callback, false);
+    this.flushWriteCallbacks();
+  }
+
+  /**
+   * Write PTY/process output while preserving the user's scroll position.
+   *
+   * This is the API higher-level terminal shells should use for background
+   * output streams. Unlike write(), this will keep the viewport anchored when
+   * the user is scrolled into scrollback.
+   */
+  writeOutput(data: string | Uint8Array, callback?: () => void): void {
+    this.assertOpen();
+
+    if (this.options.convertEol && typeof data === 'string') {
+      data = data.replace(/\n/g, '\r\n');
+    }
+
+    if (this.suspendWrites || this.flushingWriteQueue) {
+      this.writeQueue.push({ data, callback, preserveViewport: true });
+      return;
+    }
+
+    this.writeInternal(data, callback, true);
+    this.flushWriteCallbacks();
   }
 
   /**
    * Internal write implementation (extracted from write())
    */
-  private writeInternal(data: string | Uint8Array, callback?: () => void): void {
+  private writeInternal(
+    data: string | Uint8Array,
+    callback?: () => void,
+    preserveViewport: boolean = false
+  ): void {
     // Note: We intentionally do NOT clear selection on write - most modern terminals
     // preserve selection when new data arrives. Selection is cleared by user actions
     // like clicking or typing, not by incoming data.
+    const shouldPreserveViewport =
+      preserveViewport && this.viewportY > 0 && !this.wasmTerm!.isAlternateScreen();
+    const previousViewportY = shouldPreserveViewport ? this.viewportY : 0;
+    const previousScrollbackLength = shouldPreserveViewport ? this.getScrollbackLength() : 0;
 
     // Write directly to WASM terminal (handles VT parsing internally)
     this.wasmTerm!.write(data);
@@ -577,8 +626,12 @@ export class Terminal implements ITerminalCore {
     // Invalidate link cache (content changed)
     this.linkDetector?.invalidateCache();
 
-    // Phase 2: Auto-scroll to bottom on new output (xterm.js behavior)
-    if (this.viewportY !== 0) {
+    if (shouldPreserveViewport) {
+      const newScrollbackLength = this.getScrollbackLength();
+      const scrollbackDelta = Math.max(0, newScrollbackLength - previousScrollbackLength);
+      this.scrollToLine(previousViewportY + scrollbackDelta);
+    } else if (this.viewportY !== 0) {
+      // Phase 2: Auto-scroll to bottom on new output (xterm.js behavior)
       this.scrollToBottom();
     }
 
@@ -670,6 +723,7 @@ export class Terminal implements ITerminalCore {
     // This avoids the background-tab regression of using an isResizing flag
     // cleared via requestAnimationFrame (rAF is throttled/paused in background tabs).
     this.cancelRenderLoop();
+    this.suspendWrites = true;
 
     try {
       // Update dimensions
@@ -693,9 +747,11 @@ export class Terminal implements ITerminalCore {
       this.resizeEmitter.fire({ cols, rows });
 
       // Force full render
-      this.renderer!.render(this.wasmTerm!, true, this.viewportY, this);
+      this.renderCurrentFrame(true);
     } catch (e) {
       console.error('Terminal resize failed:', e);
+    } finally {
+      this.suspendWrites = false;
     }
 
     // Flush any writes that were queued during resize, then restart render loop
@@ -1143,9 +1199,19 @@ export class Terminal implements ITerminalCore {
    * Flush any writes that were queued during resize
    */
   private flushWriteQueue(): void {
-    while (this.writeQueue.length > 0) {
-      const { data, callback } = this.writeQueue.shift()!;
-      this.writeInternal(data, callback);
+    if (this.flushingWriteQueue) {
+      return;
+    }
+
+    this.flushingWriteQueue = true;
+    try {
+      while (this.writeQueue.length > 0) {
+        const { data, callback, preserveViewport } = this.writeQueue.shift()!;
+        this.writeInternal(data, callback, preserveViewport ?? false);
+      }
+      this.flushWriteCallbacks();
+    } finally {
+      this.flushingWriteQueue = false;
     }
   }
 
@@ -1158,6 +1224,19 @@ export class Terminal implements ITerminalCore {
     for (const callback of callbacks) {
       callback();
     }
+  }
+
+  private renderCurrentFrame(
+    forceAll: boolean = false,
+    scrollbarOpacity: number = this.scrollbarOpacity
+  ): GhosttyRenderFrame | null {
+    if (!this.renderer || !this.wasmTerm) {
+      return null;
+    }
+
+    const frame = this.wasmTerm.createRenderFrame();
+    this.renderer.render(frame, forceAll, this.viewportY, this, scrollbarOpacity);
+    return frame;
   }
 
   /**
@@ -1177,12 +1256,11 @@ export class Terminal implements ITerminalCore {
         // 1. Calls update() once to sync state and check dirty flags
         // 2. Only redraws dirty rows when forceAll=false
         // 3. Always calls clearDirty() at the end
-        this.renderer!.render(this.wasmTerm!, forceAll, this.viewportY, this, this.scrollbarOpacity);
+        const frame = this.renderCurrentFrame(forceAll, this.scrollbarOpacity);
 
         // Check for cursor movement (Phase 2: onCursorMove event)
-        // Note: getCursor() reads from already-updated render state (from render() above)
-        const cursor = this.wasmTerm!.getCursor();
-        if (cursor.y !== this.lastCursorY) {
+        const cursor = frame?.getCursor();
+        if (cursor && cursor.y !== this.lastCursorY) {
           this.lastCursorY = cursor.y;
           this.cursorMoveEmitter.fire();
         }
@@ -1786,7 +1864,7 @@ export class Terminal implements ITerminalCore {
 
       // Trigger render to show updated opacity
       if (this.renderer && this.wasmTerm) {
-        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
+        this.renderCurrentFrame(false, this.scrollbarOpacity);
       }
 
       if (progress < 1) {
@@ -1809,7 +1887,7 @@ export class Terminal implements ITerminalCore {
 
       // Trigger render to show updated opacity
       if (this.renderer && this.wasmTerm) {
-        this.renderer.render(this.wasmTerm, false, this.viewportY, this, this.scrollbarOpacity);
+        this.renderCurrentFrame(false, this.scrollbarOpacity);
       }
 
       if (progress < 1) {
@@ -1819,7 +1897,7 @@ export class Terminal implements ITerminalCore {
         this.scrollbarOpacity = 0;
         // Final render to clear scrollbar completely
         if (this.renderer && this.wasmTerm) {
-          this.renderer.render(this.wasmTerm, false, this.viewportY, this, 0);
+          this.renderCurrentFrame(false, 0);
         }
       }
     };

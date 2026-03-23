@@ -2834,6 +2834,45 @@ describe('Grapheme Cluster Support', () => {
     term.dispose();
   });
 
+  test('createRenderFrame snapshots visible cells independently of later writes', async () => {
+    const term = await createIsolatedTerminal();
+    term.open(container!);
+    term.write('A');
+
+    const frame = term.wasmTerm!.createRenderFrame();
+    const firstFrameCell = frame.getLine(0)?.[0];
+    expect(firstFrameCell).toBeDefined();
+    expect(String.fromCodePoint(firstFrameCell!.codepoint)).toBe('A');
+
+    term.write('\rB');
+
+    const currentCell = term.wasmTerm!.getLine(0)?.[0];
+    expect(currentCell).toBeDefined();
+    expect(String.fromCodePoint(currentCell!.codepoint)).toBe('B');
+
+    const snapshottedCell = frame.getLine(0)?.[0];
+    expect(snapshottedCell).toBeDefined();
+    expect(String.fromCodePoint(snapshottedCell!.codepoint)).toBe('A');
+
+    term.dispose();
+  });
+
+  test('createRenderFrame clearDirty clears dirty state exactly once', async () => {
+    const term = await createIsolatedTerminal();
+    term.open(container!);
+    term.write('Dirty');
+
+    const frame = term.wasmTerm!.createRenderFrame();
+    expect(frame.isRowDirty(0)).toBe(true);
+
+    frame.clearDirty();
+    frame.clearDirty();
+
+    expect(term.wasmTerm!.update()).toBe(0);
+
+    term.dispose();
+  });
+
   test('grapheme cluster mode 2027 is enabled by default', async () => {
     const term = await createIsolatedTerminal();
     term.open(container!);
@@ -2905,6 +2944,28 @@ describe('Write Behavior', () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(callbackOrder).toEqual([1, 2, 3]);
+
+    term.dispose();
+  });
+
+  test('writeOutput preserves viewport position while scrollback grows', async () => {
+    if (!container) return;
+
+    const term = await createIsolatedTerminal({ rows: 5, cols: 20 });
+    term.open(container);
+
+    for (let i = 0; i < 12; i += 1) {
+      term.write(`Line ${i}\r\n`);
+    }
+
+    const previousScrollbackLength = term.getScrollbackLength();
+    term.scrollToLine(4);
+    expect(term.getViewportY()).toBe(4);
+
+    term.writeOutput('Newest line\r\n');
+
+    expect(term.getScrollbackLength()).toBeGreaterThan(previousScrollbackLength);
+    expect(term.getViewportY()).toBe(5);
 
     term.dispose();
   });

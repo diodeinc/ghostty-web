@@ -67,8 +67,9 @@ For a comprehensive client <-> server example, refer to the [demo](./demo/index.
 
 ## Development
 
-ghostty-web builds from Ghostty's source with a [patch](./patches/ghostty-wasm-api.patch) to expose additional
-functionality.
+ghostty-web builds from Ghostty's source with a [small patch](./patches/ghostty-wasm-api.patch) for the few browser
+integration features that upstream `libghostty-vt` still does not expose directly: config-based construction for
+terminal colors, hyperlink URI lookup, and terminal response reading.
 
 > Requires Zig and Bun.
 
@@ -76,7 +77,7 @@ functionality.
 bun run build
 ```
 
-Mitchell Hashimoto (author of Ghostty) has [been working](https://mitchellh.com/writing/libghostty-is-coming) on `libghostty` which makes this all possible. The patches are very minimal thanks to the work the Ghostty team has done, and we expect them to get smaller.
+Mitchell Hashimoto (author of Ghostty) has [been working](https://mitchellh.com/writing/libghostty-is-coming) on `libghostty` which makes this all possible. The remaining patch surface is intentionally narrow, and we expect it to keep shrinking as upstream `libghostty-vt` grows.
 
 This library will eventually consume a native Ghostty WASM distribution once available, and will continue to provide an xterm.js compatible API.
 

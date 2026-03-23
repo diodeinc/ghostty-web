@@ -2,31 +2,11 @@ diff --git a/src/lib_vt.zig b/src/lib_vt.zig
 index 7a75bb92a..a6b273265 100644
 --- a/src/lib_vt.zig
 +++ b/src/lib_vt.zig
-@@ -217,6 +217,31 @@ comptime {
+@@ -217,6 +217,11 @@ comptime {
          @export(&c.grid_ref_row, .{ .name = "ghostty_grid_ref_row" });
          @export(&c.grid_ref_graphemes, .{ .name = "ghostty_grid_ref_graphemes" });
          @export(&c.grid_ref_style, .{ .name = "ghostty_grid_ref_style" });
 +        @export(&c.web_terminal_new_with_config, .{ .name = "ghostty_terminal_new_with_config" });
-+        @export(&c.web_terminal_write, .{ .name = "ghostty_terminal_write" });
-+        @export(&c.web_terminal_get_mode, .{ .name = "ghostty_terminal_get_mode" });
-+        @export(&c.web_terminal_is_alternate_screen, .{ .name = "ghostty_terminal_is_alternate_screen" });
-+        @export(&c.web_terminal_has_mouse_tracking, .{ .name = "ghostty_terminal_has_mouse_tracking" });
-+        @export(&c.web_render_state_get_dirty, .{ .name = "ghostty_render_state_get_dirty" });
-+        @export(&c.web_render_state_get_cols, .{ .name = "ghostty_render_state_get_cols" });
-+        @export(&c.web_render_state_get_rows, .{ .name = "ghostty_render_state_get_rows" });
-+        @export(&c.web_render_state_get_cursor_x, .{ .name = "ghostty_render_state_get_cursor_x" });
-+        @export(&c.web_render_state_get_cursor_y, .{ .name = "ghostty_render_state_get_cursor_y" });
-+        @export(&c.web_render_state_get_cursor_visible, .{ .name = "ghostty_render_state_get_cursor_visible" });
-+        @export(&c.web_render_state_get_bg_color, .{ .name = "ghostty_render_state_get_bg_color" });
-+        @export(&c.web_render_state_get_fg_color, .{ .name = "ghostty_render_state_get_fg_color" });
-+        @export(&c.web_render_state_is_row_dirty, .{ .name = "ghostty_render_state_is_row_dirty" });
-+        @export(&c.web_render_state_mark_clean, .{ .name = "ghostty_render_state_mark_clean" });
-+        @export(&c.web_render_state_get_viewport, .{ .name = "ghostty_render_state_get_viewport" });
-+        @export(&c.web_render_state_get_grapheme, .{ .name = "ghostty_render_state_get_grapheme" });
-+        @export(&c.web_terminal_get_scrollback_length, .{ .name = "ghostty_terminal_get_scrollback_length" });
-+        @export(&c.web_terminal_get_scrollback_line, .{ .name = "ghostty_terminal_get_scrollback_line" });
-+        @export(&c.web_terminal_get_scrollback_grapheme, .{ .name = "ghostty_terminal_get_scrollback_grapheme" });
-+        @export(&c.web_terminal_is_row_wrapped, .{ .name = "ghostty_terminal_is_row_wrapped" });
 +        @export(&c.web_terminal_get_hyperlink_uri, .{ .name = "ghostty_terminal_get_hyperlink_uri" });
 +        @export(&c.web_terminal_get_scrollback_hyperlink_uri, .{ .name = "ghostty_terminal_get_scrollback_hyperlink_uri" });
 +        @export(&c.web_terminal_has_response, .{ .name = "ghostty_terminal_has_response" });
@@ -46,33 +26,13 @@ index 11e14f8c7..79c2942c5 100644
  
  // The full C API, unexported.
  pub const build_info = buildpkg.get;
-@@ -162,3 +163,30 @@ test {
+@@ -162,3 +163,10 @@ test {
      // We want to make sure we run the tests for the C allocator interface.
      _ = @import("../../lib/allocator.zig");
  }
 +
 +
 +pub const web_terminal_new_with_config = web.newWithConfig;
-+pub const web_terminal_write = web.write;
-+pub const web_terminal_get_mode = web.getMode;
-+pub const web_terminal_is_alternate_screen = web.isAlternateScreen;
-+pub const web_terminal_has_mouse_tracking = web.hasMouseTracking;
-+pub const web_render_state_get_dirty = web.renderStateGetDirty;
-+pub const web_render_state_get_cols = web.renderStateGetCols;
-+pub const web_render_state_get_rows = web.renderStateGetRows;
-+pub const web_render_state_get_cursor_x = web.renderStateGetCursorX;
-+pub const web_render_state_get_cursor_y = web.renderStateGetCursorY;
-+pub const web_render_state_get_cursor_visible = web.renderStateGetCursorVisible;
-+pub const web_render_state_get_bg_color = web.renderStateGetBgColor;
-+pub const web_render_state_get_fg_color = web.renderStateGetFgColor;
-+pub const web_render_state_is_row_dirty = web.renderStateIsRowDirty;
-+pub const web_render_state_mark_clean = web.renderStateMarkClean;
-+pub const web_render_state_get_viewport = web.renderStateGetViewport;
-+pub const web_render_state_get_grapheme = web.renderStateGetGrapheme;
-+pub const web_terminal_get_scrollback_length = web.getScrollbackLength;
-+pub const web_terminal_get_scrollback_line = web.getScrollbackLine;
-+pub const web_terminal_get_scrollback_grapheme = web.getScrollbackGrapheme;
-+pub const web_terminal_is_row_wrapped = web.isRowWrapped;
 +pub const web_terminal_get_hyperlink_uri = web.getHyperlinkUri;
 +pub const web_terminal_get_scrollback_hyperlink_uri = web.getScrollbackHyperlinkUri;
 +pub const web_terminal_has_response = web.hasResponse;
